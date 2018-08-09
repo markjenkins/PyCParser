@@ -4,6 +4,7 @@
 
 import ctypes, _ctypes
 from inspect import isclass
+from string import hexdigits
 
 SpaceChars = " \t"
 LowercaseLetterChars = "abcdefghijklmnopqrstuvwxyz"
@@ -1505,8 +1506,44 @@ def cpre2_parse(stateStruct, input, brackets=None):
                 elif c == "\\": state = 21
                 else: laststr += c
             elif state == 21: # escape in "str
-                laststr += simple_escape_char(c)
-                state = 20
+                if c == 'x':
+                    state = 22
+                    hex_char_accumulation = ""
+                else:
+                    laststr += simple_escape_char(c)
+                    state = 20
+            elif state == 22: # \x hex escape, before first character
+                if c in hexdigits:
+                    hex_char_accumulation += c
+                    state = 23
+                else:
+                    stateStruct.error("expected hex digit after \\x")
+            elif state == 23: # \x hex escape, before possible second character
+                if c in hexdigits:
+                    hex_char_accumulation += c
+                    laststr += chr(int(hex_char_accumulation,16))
+                    state = 24
+                else: # one hex digit is fine
+                    laststr += chr(int(hex_char_accumulation,16))
+                    # allow regular processing for whatever c is
+                    breakLoop = False
+                    state = 20
+            elif state == 24: # \x hex escape, after second character
+                if c in hexdigits:
+                    # only designed to work on 1 byte chars (8 bits),
+                    # not on systems where char has a different width
+                    # or where byte has a different width
+                    assert(ctypes.sizeof(ctypes.c_char) == 1)
+                    assert(ctypes.sizeof(ctypes.c_char) ==
+                           ctypes.sizeof(ctypes.c_ubyte) )
+                    # prove 8 bits per byte by overflowing c_ubyte (2**8=256)
+                    assert( ctypes.c_ubyte(2**8).value ==
+                            ctypes.c_ubyte(0).value )
+                    stateStruct.error("no more than two hex digits per \\x")
+                else:
+                    # allow regular processing for whatever remains in string
+                    breakLoop = False
+                    state = 20
             elif state == 25: # 'str
                 if c == "'":
                     if len(laststr) > 1 and laststr[0] == '\0':  # hacky check for '\0abc'-like strings.
